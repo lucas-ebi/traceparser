@@ -100,14 +100,29 @@ def process_events(data):
 
 def visualize_dependency_graph(dependency_graph):
     dot = graphviz.Digraph(comment='Dependency Graph', graph_attr={'rankdir': 'LR'})
+    graph_data = {'nodes': [], 'edges': []}  # Initialize the structure for JSON export
+
     for caller, callees in dependency_graph.items():
         caller_color = hash_string_to_rgb(caller)
+        if caller not in graph_data['nodes']:
+            graph_data['nodes'].append(caller)
         dot.node(caller, color=caller_color, style='filled', fillcolor=caller_color)
+
         for callee in callees:
             callee_color = hash_string_to_rgb(callee)
+            if callee not in graph_data['nodes']:
+                graph_data['nodes'].append(callee)
+            graph_data['edges'].append({'source': caller, 'target': callee})
+
             dot.node(callee, color=callee_color, style='filled', fillcolor=callee_color)
             dot.edge(caller, callee)
-    dot.render('dependency_graph', view=True)  # This will save and open the graph
+
+    # Save the graph visualization
+    dot.render('dependency_graph', view=True)
+
+    # Export the graph data to JSON for further analysis
+    with open('dependency_graph.json', 'w') as f:
+        json.dump(graph_data, f, indent=4)
 
 def parse_viztracer_output(file_path):
     """
