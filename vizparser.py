@@ -102,6 +102,8 @@ def process_events(data):
         event['end'] = event_end
         event_stack.append(event)
     
+    print('└─ END')  # Print the end of the call stack
+    
     return dependency_graph  # Return the graph for visualization
 
 def extract_file_attribute(node_string):
