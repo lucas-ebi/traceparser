@@ -1,8 +1,10 @@
 import json
 import argparse
 from collections import defaultdict
+import re
 import graphviz
 import hashlib
+import networkx as nx
 
 def load_json_data(file_path):
     """
@@ -19,32 +21,33 @@ def load_json_data(file_path):
         exit(1)
 
 def format_function_call(input_str):
-    # Splitting the input string to extract the relevant parts
-    function_name, file_path_with_line = input_str.split(" (")
-    # Check if the function name has no "<" or ">" characters
-    if "<" not in function_name and ">" not in function_name:
-        file_path = file_path_with_line.split(":")[0]  # Removing line number
+    # Initialize variables
+    function_name = None
+    file_path = None
+    line = None
 
-        # Normalizing the file path
-        base_path = "/nfs/production/gerard/pdbe/onedep/deployments/emdb_dev_1/source/"
-        normalized_path = file_path.replace(base_path, "").replace(".py", "")
+    # Use regex to extract the function name, file path, and line number
+    match = re.search(r"(.+) \(([^:()]+(?![^()]*[<>])):(\d+)\)", input_str)
+    if match:
+        function_name, file_path, line = match.groups()
 
-        # Converting path separators to dots for module notation
-        module_notation = normalized_path.replace("/", ".")
+    if any(char in function_name for char in ["<", ">"]):
+        function_name = None
 
-        # Splitting the string at ".wwpdb" and taking the part after it
-        parts = module_notation.split(".wwpdb", 1)  # The '1' limits the split to only the first occurrence
-        if len(parts) > 1:
-            module_notation = "wwpdb" + parts[1]  # Prepend ".wwpdb" since it's removed by split
+    # Proceed only if function_name is successfully extracted and does not contain "<" or ">"
+    if file_path:
+        # Define the regex pattern to split by, which matches "py-wwpdb_" followed by any string and a "/"
+        pattern = r"py-wwpdb_[^/]+/"
 
-        if module_notation == "wwpdb.apps.deposit.depui.upload":
-            # Add file_upload_submit to the module notation
-            module_notation += ".file_upload_submit"
+        # Extract the substring that matches the pattern
+        match = re.search(pattern, file_path)
+        if match:
+            # Extract the matched substring
+            repository = match.group(0)
+            # Use the matched substring to split the file path
+            file_path = file_path.split(repository)[1]
 
-        # Concatenating to get the desired format
-        formatted_str = f"{module_notation}.{function_name}"
-        
-        return formatted_str
+    return function_name, file_path, line
 
 def hash_string_to_rgb(input_str):
     """
@@ -71,10 +74,12 @@ def process_events(data):
         while event_stack and event_stack[-1]['end'] <= event['ts']:
             popped_event = event_stack.pop()
             if event_stack:  # If there's a caller, update the graph
-                caller = format_function_call(event_stack[-1]['name'])
-                callee = format_function_call(popped_event['name'])
+                caller, caller_path, caller_line = format_function_call(event_stack[-1]['name'])
+                callee, callee_path, callee_line = format_function_call(popped_event['name'])
                 if caller and callee:
-                    dependency_graph[caller].add(callee)
+                    source = f"name={caller}\nfile={caller_path}\nline={caller_line}"
+                    target = f"name={callee}\nfile={callee_path}\nline={callee_line}"
+                    dependency_graph[source].add(target)
 
         # Determine the indentation
         indent = ''.join(['|   ' for _ in range(len(event_stack))])
@@ -89,7 +94,8 @@ def process_events(data):
         branch_symbol = '└─ ' if is_last_at_depth else '├─ '
 
         input_str = event['name']
-        formatted_str = format_function_call(input_str)  # Assuming this function exists and formats the string
+        call, path, line = format_function_call(input_str)
+        formatted_str = f"{call} ({path}:{line})" if call else None
         if formatted_str:
             print(f"{indent}{branch_symbol}{formatted_str}")
 
@@ -98,18 +104,27 @@ def process_events(data):
     
     return dependency_graph  # Return the graph for visualization
 
+def extract_file_attribute(node_string):
+    """Extract the file attribute from the node string."""
+    match = re.search(r'file=([^\n]+)', node_string)
+    if match:
+        return match.group(1)  # Return the matched file path
+    return None  # Return None if no file attribute is found
+
 def visualize_dependency_graph(dependency_graph):
     dot = graphviz.Digraph(comment='Dependency Graph', graph_attr={'rankdir': 'LR'})
-    graph_data = {'nodes': [], 'edges': []}  # Initialize the structure for JSON export
+    graph_data = {'nodes': [], 'edges': []}
 
     for caller, callees in dependency_graph.items():
-        caller_color = hash_string_to_rgb(caller)
+        caller_file = extract_file_attribute(caller)
+        caller_color = hash_string_to_rgb(caller_file if caller_file else caller)
         if caller not in graph_data['nodes']:
             graph_data['nodes'].append(caller)
         dot.node(caller, color=caller_color, style='filled', fillcolor=caller_color)
 
         for callee in callees:
-            callee_color = hash_string_to_rgb(callee)
+            callee_file = extract_file_attribute(callee)
+            callee_color = hash_string_to_rgb(callee_file if callee_file else callee)
             if callee not in graph_data['nodes']:
                 graph_data['nodes'].append(callee)
             graph_data['edges'].append({'source': caller, 'target': callee})
