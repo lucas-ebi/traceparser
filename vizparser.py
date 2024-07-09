@@ -116,10 +116,13 @@ def extract_file_attribute(node_string):
 def visualize_dependency_graph(dependency_graph):
     dot = graphviz.Digraph(comment='Dependency Graph', graph_attr={'rankdir': 'LR'})
     graph_data = {'nodes': [], 'edges': []}
+    color_file_mapping = {}
 
     for caller, callees in dependency_graph.items():
         caller_file = extract_file_attribute(caller)
         caller_color = hash_string_to_rgb(caller_file if caller_file else caller)
+        color_file_mapping[caller_color] = caller_file if caller_file else "Unknown"
+
         if caller not in graph_data['nodes']:
             graph_data['nodes'].append(caller)
         dot.node(caller, color=caller_color, style='filled', fillcolor=caller_color)
@@ -127,12 +130,20 @@ def visualize_dependency_graph(dependency_graph):
         for callee in callees:
             callee_file = extract_file_attribute(callee)
             callee_color = hash_string_to_rgb(callee_file if callee_file else callee)
+            color_file_mapping[callee_color] = callee_file if callee_file else "Unknown"
+
             if callee not in graph_data['nodes']:
                 graph_data['nodes'].append(callee)
             graph_data['edges'].append({'source': caller, 'target': callee})
 
             dot.node(callee, color=callee_color, style='filled', fillcolor=callee_color)
             dot.edge(caller, callee)
+
+    # Add a legend for color-file mapping
+    with dot.subgraph(name='cluster_legend') as c:
+        c.attr(label='Legend', style='filled', color='lightgrey', fontsize='20', fontcolor='black')
+        for color, file in color_file_mapping.items():
+            c.node(file, label=file, color=color, style='filled', fillcolor=color)
 
     # Save the graph visualization
     dot.render('dependency_graph', view=True)
@@ -149,12 +160,45 @@ def parse_viztracer_output(file_path):
     dependency_graph = process_events(data)
     visualize_dependency_graph(dependency_graph)  # Visualize the graph after processing
 
+# Define a function that parses the dependency graph JSON file and analyzes the graph, then convert it into a nested dictionary and export it to a JSON file
+def analyze_dependency_graph(file_path):
+    """
+    Analyze the dependency graph from the given file path.
+    """
+    with open(file_path, 'r') as f:
+        graph_data = json.load(f)
+
+    # Initialize the graph dictionary
+    graph_dict = {'nodes': {}, 'edges': {}}
+
+    # Process the nodes
+    for node in graph_data['nodes']:
+        node_id = node
+        node_data = {'id': node_id, 'name': node, 'file': extract_file_attribute(node)}
+        graph_dict['nodes'][node_id] = node_data
+
+    # Process the edges
+    for edge in graph_data['edges']:
+        source = edge['source']
+        target = edge['target']
+        if source not in graph_dict['edges']:
+            graph_dict['edges'][source] = []
+        graph_dict['edges'][source].append(target)
+
+    # Export the graph dictionary to a JSON file
+    with open('call_stack.json', 'w') as f:
+        json.dump(graph_dict, f, indent=4)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Parse VizTracer output JSON file and print call stacks.")
     parser.add_argument('file_path', type=str, help="Path to the VizTracer output JSON file")
     args = parser.parse_args()
 
     parse_viztracer_output(args.file_path)
+
+    # Analyze the dependency graph
+    analyze_dependency_graph('dependency_graph.json')
 
 if __name__ == "__main__":
     main()
